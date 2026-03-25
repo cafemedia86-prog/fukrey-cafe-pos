@@ -20,8 +20,12 @@ import 'package:flutter/services.dart';
 final routerProvider = Provider<GoRouter>((ref) {
   final authRepo = ref.watch(authRepositoryProvider);
   
-  // Decide initial route based on the Android flavor
-  final String initialRoute = (appFlavor == 'admin') ? '/login' : '/customer';
+  // Read native flavor or fallback to web dart-define environment variable
+  const String webFlavor = String.fromEnvironment('APP_FLAVOR', defaultValue: 'customer');
+  final String activeFlavor = appFlavor ?? webFlavor;
+  
+  // Decide initial route based on the flavor
+  final String initialRoute = (activeFlavor == 'admin') ? '/login' : '/customer';
   
   return GoRouter(
     navigatorKey: navigatorKey,
