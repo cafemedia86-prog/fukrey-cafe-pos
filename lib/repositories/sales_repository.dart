@@ -157,7 +157,7 @@ class SalesRepository {
 
       var query = _client
           .from('orders')
-          .select('id, total_amount, status, customer_name, customer_phone, created_at, payment_method, order_items(quantity, price, menu_items(name))');
+          .select('id, total_amount, status, customer_name, customer_phone, created_at, payment_method, coupon_code, discount_amount, order_items(quantity, price, menu_items(name))');
 
       if (outletId != null) query = query.eq('outlet_id', outletId);
       if (paymentMethod != null) query = query.eq('payment_method', paymentMethod.toLowerCase());

@@ -13,6 +13,10 @@ class AuthRepository {
 
   User? get currentUser => _supabase.auth.currentUser;
 
+  Future<AuthResponse> signIn(String email, String password) async {
+    return await signInWithEmailPassword(email, password);
+  }
+
   Future<AuthResponse> signInWithEmailPassword(String email, String password) async {
     return await _supabase.auth.signInWithPassword(
       email: email,
@@ -22,13 +26,5 @@ class AuthRepository {
 
   Future<void> signOut() async {
     await _supabase.auth.signOut();
-  }
-  
-  // Optional: Sign up method if needed later
-  Future<AuthResponse> signUpWithEmailPassword(String email, String password) async {
-      return await _supabase.auth.signUp(
-          email: email,
-          password: password
-      );
   }
 }

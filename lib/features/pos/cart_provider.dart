@@ -32,7 +32,7 @@ class CartState {
   });
 
   double get subtotal => items.fold(0, (sum, item) => sum + item.total);
-  double get discountAmount => appliedCoupon?.calculateDiscount(subtotal) ?? 0.0;
+  double get discountAmount => appliedCoupon?.calculateDiscount(subtotal, items) ?? 0.0;
   double get taxAmount => (subtotal - discountAmount) * taxRate;
   double get total => (subtotal - discountAmount) + taxAmount;
 

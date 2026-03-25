@@ -26,6 +26,9 @@ class HomeScreen extends ConsumerWidget {
           } else if (profile.role == 'staff') {
              Future.microtask(() => { if (context.mounted) context.go('/dashboard') });
              return const Center(child: CircularProgressIndicator());
+          } else if (profile.role == 'customer') {
+             Future.microtask(() => { if (context.mounted) context.go('/customer') });
+             return const Center(child: CircularProgressIndicator());
           }
           
           return const Center(child: Text('Unknown Role'));

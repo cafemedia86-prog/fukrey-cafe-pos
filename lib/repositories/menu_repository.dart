@@ -6,31 +6,40 @@ import '../core/constants.dart';
 
 class MenuRepository {
   final SupabaseClient _client = Supabase.instance.client;
+  final Map<String, List<MenuItem>> _cache = {};
 
-  Future<List<MenuItem>> getMenuItems() async {
+  Future<List<MenuItem>> getMenuItems({String? outletId}) async {
+    final cacheKey = outletId ?? 'all';
+    if (_cache.containsKey(cacheKey)) return _cache[cacheKey]!;
+
     try {
-      // Return mock data if url is placeholder
-      if (AppConstants.supabaseUrl.contains('YOUR_SUPABASE_URL')) {
-        return [
-          MenuItem(id: '1', name: 'Burger', price: 150, description: 'Tasty burger'),
-          MenuItem(id: '2', name: 'Fries', price: 80, description: 'Crispy fries'),
-          MenuItem(id: '3', name: 'Coke', price: 40, description: 'Chilled coke'),
-        ];
-      }
-      
-      final response = await _client.from('menu_items').select().eq('is_available', true);
-      return (response as List).map((e) => MenuItem.fromJson(e)).toList();
+      final response = await _client
+          .from('menu_items')
+          .select()
+          .eq('is_available', true);
+      final items = (response as List).map((e) => MenuItem.fromJson(e)).toList();
+      _cache[cacheKey] = items;
+      return items;
     } catch (e) {
-      // return empty list or rethrow
       return [];
     }
   }
+
+  void clearCache() => _cache.clear();
 }
 
 final menuRepositoryProvider = Provider((ref) => MenuRepository());
 
 final menuItemsProvider = FutureProvider<List<MenuItem>>((ref) async {
   return ref.watch(menuRepositoryProvider).getMenuItems();
+});
+
+final outletMenuItemsProvider = FutureProvider.family<List<MenuItem>, String>((ref, outletId) async {
+  // Handle 'general' outletId bypass for development
+  if (outletId == 'general') {
+    return ref.watch(menuRepositoryProvider).getMenuItems(); // Fetch all items if 'general'
+  }
+  return ref.watch(menuRepositoryProvider).getMenuItems(outletId: outletId);
 });
 
 final categoriesProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {

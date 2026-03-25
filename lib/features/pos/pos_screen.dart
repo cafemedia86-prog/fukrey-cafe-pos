@@ -1,7 +1,7 @@
 
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:go_router/go_router.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../models/menu_item_model.dart';
@@ -13,6 +13,7 @@ import '../../services/printer_service.dart';
 import '../../core/navigator_key.dart';
 import 'cart_provider.dart';
 import 'printer_settings_dialog.dart';
+import 'takeaway_orders_screen.dart';
 import '../../repositories/user_repository.dart';
 import '../auth/auth_provider.dart';
 import '../admin/admin_dashboard.dart';
@@ -106,6 +107,36 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             foregroundColor: Colors.white,
             elevation: 2,
             actions: [
+              // Takeaway Orders button with live badge
+              Consumer(
+                builder: (context, ref, _) {
+                  final pendingOrders = ref.watch(takeawayOrdersProvider);
+                  final count = pendingOrders.when(
+                    data: (orders) => orders.where((o) => o['status'] == 'pending').length,
+                    loading: () => 0,
+                    error: (_, __) => 0,
+                  );
+                  return Stack(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.delivery_dining),
+                        tooltip: 'Takeaway Orders',
+                        onPressed: () => Navigator.push(context,
+                            MaterialPageRoute(builder: (_) => const TakeawayOrdersScreen())),
+                      ),
+                      if (count > 0)
+                        Positioned(
+                          right: 4, top: 4,
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
+                            child: Text('$count', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
               IconButton(
                 icon: const Icon(Icons.print),
                 onPressed: () => showDialog(context: context, builder: (context) => const PrinterSettingsDialog()),
@@ -223,6 +254,29 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     );
   }
 
+  Future<void> _updateOrderStatus(BuildContext context, String orderId, String newStatus) async {
+    try {
+      await Supabase.instance.client
+          .from('orders')
+          .update({'status': newStatus})
+          .eq('id', orderId);
+      
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Order status updated to $newStatus'), backgroundColor: Colors.green),
+        );
+        ref.invalidate(recentOrdersProvider);
+        ref.invalidate(filteredOrdersProvider);
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Update failed: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   Future<void> _showHistoryDialog(BuildContext context) async {
     showDialog(
       context: context,
@@ -244,10 +298,76 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                       itemBuilder: (context, index) {
                         final order = orders[index];
                         final time = DateTime.parse(order['created_at']).toLocal();
+                        final status = order['status'] ?? 'pending';
+                        final isPending = status == 'pending';
+                        final isPreparing = status == 'preparing';
+                        final isReady = status == 'ready';
+                        
                         return ListTile(
-                          title: Text('Order #${order['id'].toString().substring(0, 8)}'),
-                          subtitle: Text('${time.day}/${time.month} ${time.hour}:${time.minute.toString().padLeft(2, '0')} | ₹${order['total_amount']} | ${order['payment_method']?.toString().toUpperCase() ?? 'CASH'}'),
-                          trailing: const Icon(Icons.print, color: Colors.orange),
+                          title: Row(
+                            children: [
+                              Text('Order #${order['id'].toString().substring(0, 8)}'),
+                              if (isPending || isPreparing || isReady)
+                                Container(
+                                  margin: const EdgeInsets.only(left: 8),
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: isPending ? Colors.orange[100] : (isPreparing ? Colors.blue[100] : Colors.green[100]), 
+                                    borderRadius: BorderRadius.circular(4)
+                                  ),
+                                  child: Text(status.toUpperCase(), 
+                                    style: TextStyle(
+                                      color: isPending ? Colors.orange : (isPreparing ? Colors.blue : Colors.green), 
+                                      fontSize: 10, fontWeight: FontWeight.bold
+                                    )
+                                  ),
+                                ),
+                            ],
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('${time.day}/${time.month} ${time.hour}:${time.minute.toString().padLeft(2, '0')} | ₹${order['total_amount']} | ${order['payment_method']?.toString().toUpperCase() ?? 'CASH'}'),
+                              if ((order['discount_amount'] ?? 0) > 0)
+                                Text(
+                                  '-₹${(order['discount_amount'] as num).toStringAsFixed(0)} (${order['coupon_code']})', 
+                                  style: const TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.bold)
+                                ),
+                            ],
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (isPending)
+                                TextButton(
+                                  style: TextButton.styleFrom(foregroundColor: Colors.green),
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                    _updateOrderStatus(context, order['id'], 'preparing');
+                                  },
+                                  child: const Text('ACCEPT'),
+                                )
+                              else if (isPreparing)
+                                TextButton(
+                                  style: TextButton.styleFrom(foregroundColor: Colors.orange),
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                    _updateOrderStatus(context, order['id'], 'ready');
+                                  },
+                                  child: const Text('MARK READY'),
+                                )
+                              else if (isReady)
+                                TextButton(
+                                  style: TextButton.styleFrom(foregroundColor: Colors.blue),
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                    _updateOrderStatus(context, order['id'], 'completed');
+                                  },
+                                  child: const Text('HANDOVER'),
+                                ),
+                              const Icon(Icons.print, color: Colors.orange),
+                            ],
+                          ),
                           onTap: () async {
                             // Prepare print status
                             final Map<String, dynamic> orderData = {
@@ -490,7 +610,12 @@ class _CartFooterState extends ConsumerState<_CartFooter> {
             const Divider(),
             _TotalRow(label: 'Subtotal', value: '₹${cartState.subtotal.toStringAsFixed(2)}'),
             if (cartState.discountAmount > 0)
-              _TotalRow(label: 'Discount', value: '-₹${cartState.discountAmount.toStringAsFixed(2)}', isDiscount: true),
+              _TotalRow(
+                label: (cartState.appliedCoupon?.applicableItemIds != null && cartState.appliedCoupon!.applicableItemIds!.isNotEmpty) 
+                    ? 'Item Discount' : 'Discount', 
+                value: '-₹${cartState.discountAmount.toStringAsFixed(0)}', 
+                isDiscount: true
+              ),
             if (cartState.taxAmount > 0)
               _TotalRow(label: 'Tax (5%)', value: '₹${cartState.taxAmount.toStringAsFixed(2)}'),
             const SizedBox(height: 8),
@@ -536,10 +661,17 @@ class _CartFooterState extends ConsumerState<_CartFooter> {
     try {
       final coupon = await ref.read(couponRepositoryProvider).getCouponByCode(code);
       if (coupon != null) {
-        ref.read(cartProvider.notifier).applyCoupon(coupon);
+        final error = coupon.validate(cartState.subtotal);
+        if (error == null) {
+          ref.read(cartProvider.notifier).applyCoupon(coupon);
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error), backgroundColor: Colors.red));
+          }
+        }
       } else {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invalid Coupon'), backgroundColor: Colors.red));
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invalid Coupon Code'), backgroundColor: Colors.red));
         }
       }
     } catch (e) {
@@ -605,7 +737,12 @@ void _showInvoicePreview(BuildContext context, WidgetRef ref, CartState cart, St
               const Divider(),
               _TotalRow(label: 'Subtotal', value: '₹${cart.subtotal.toStringAsFixed(2)}'),
               if (cart.discountAmount > 0)
-                _TotalRow(label: 'Discount', value: '-₹${cart.discountAmount.toStringAsFixed(2)}', isDiscount: true),
+                _TotalRow(
+                  label: (cart.appliedCoupon?.applicableItemIds != null && cart.appliedCoupon!.applicableItemIds!.isNotEmpty) 
+                      ? 'Item Discount' : 'Discount', 
+                  value: '-₹${cart.discountAmount.toStringAsFixed(0)}', 
+                  isDiscount: true
+                ),
               if (cart.taxAmount > 0)
                 _TotalRow(label: 'Tax (5%)', value: '₹${cart.taxAmount.toStringAsFixed(2)}'),
               const Divider(),
@@ -691,6 +828,7 @@ Future<void> _handleCheckout(BuildContext context, WidgetRef ref, CartState cart
       'coupon_code': cartState.appliedCoupon?.code,
       'customer_name': custName.isEmpty ? null : custName,
       'customer_phone': custPhone.isEmpty ? null : custPhone,
+      'status': 'completed',
     };
 
     print('DEBUG: [_handleCheckout] Calling createOrder...');
@@ -836,12 +974,19 @@ class _MenuItemCard extends ConsumerWidget {
                 children: [
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: const Color(0xFFE38242).withValues(alpha: 0.1),
                       borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
                     ),
-                    child: const Icon(Icons.fastfood, size: 30, color: Color(0xFFE38242)),
+                    child: ClipRRect(
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
+                      child: item.imageUrl != null && item.imageUrl!.isNotEmpty
+                          ? Image.network(item.imageUrl!, fit: BoxFit.cover)
+                          : const Padding(
+                              padding: EdgeInsets.all(12.0),
+                              child: Icon(Icons.fastfood, size: 30, color: Color(0xFFE38242)),
+                            ),
+                    ),
                   ),
                   if (quantity > 0)
                     Positioned(

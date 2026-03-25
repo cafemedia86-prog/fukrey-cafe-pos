@@ -20,6 +20,8 @@ class MenuItem {
     this.isAvailable = true,
   });
 
+  String get category => categoryId ?? 'All';
+
   factory MenuItem.fromJson(Map<String, dynamic> json) {
     return MenuItem(
       id: json['id'],

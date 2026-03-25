@@ -32,8 +32,9 @@ class OrderRepository {
     print('DEBUG: Inserting into orders table... outlet_id: ${orderData['outlet_id']}');
     final orderResponse = await _client.from('orders').insert({
       'outlet_id': orderData['outlet_id'],
+      'customer_id': orderData['customer_id'],
       'total_amount': orderData['total'],
-      'status': 'completed',
+      'status': orderData['status'] ?? 'pending',   // Defaults to pending for customer orders
       'payment_method': orderData['payment_method'] ?? 'cash',
       'coupon_code': orderData['coupon_code'],
       'discount_amount': orderData['discount_amount'],
@@ -62,7 +63,27 @@ class OrderRepository {
       print('DEBUG: Order items inserted successfully.');
     }
 
+    // 3. Increment Coupon Usage
+    if (orderData['coupon_code'] != null) {
+      print('DEBUG: Incrementing usage for coupon: ${orderData['coupon_code']}');
+      try {
+        await _client.from('coupons')
+            .update({'current_usage': (await _client.from('coupons').select('current_usage').eq('code', orderData['coupon_code']).single())['current_usage'] + 1})
+            .eq('code', orderData['coupon_code']);
+      } catch (e) {
+        print('DEBUG: Failed to increment coupon usage: $e');
+      }
+    }
+
     return orderId;
+  }
+
+  Stream<Map<String, dynamic>?> watchOrder(String orderId) {
+    return _client
+        .from('orders')
+        .stream(primaryKey: ['id'])
+        .eq('id', orderId)
+        .map((list) => list.isEmpty ? null : list.first);
   }
 }
 

@@ -25,4 +25,28 @@ class CouponRepository {
       return null;
     }
   }
+
+  Future<List<CouponModel>> getCoupons() async {
+    try {
+      final data = await _supabase
+          .from('coupons')
+          .select()
+          .order('created_at', ascending: false);
+      return (data as List).map((json) => CouponModel.fromJson(json)).toList();
+    } catch (e) {
+      return [];
+    }
+  }
+
+  Future<void> addCoupon(Map<String, dynamic> couponData) async {
+    await _supabase.from('coupons').insert(couponData);
+  }
+
+  Future<void> deleteCoupon(String id) async {
+    await _supabase.from('coupons').delete().eq('id', id);
+  }
 }
+
+final couponsProvider = FutureProvider<List<CouponModel>>((ref) {
+  return ref.watch(couponRepositoryProvider).getCoupons();
+});

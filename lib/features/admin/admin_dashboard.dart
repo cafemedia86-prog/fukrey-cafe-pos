@@ -8,6 +8,8 @@ import 'package:fl_chart/fl_chart.dart';
 import '../../repositories/sales_repository.dart';
 import '../../repositories/menu_repository.dart';
 import '../../repositories/user_repository.dart';
+import '../../repositories/offer_repository.dart';
+import '../../repositories/coupon_repository.dart';
 import '../auth/auth_provider.dart';
 import '../../core/file_utils.dart';
 import 'dart:io' show File;
@@ -82,6 +84,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                               if (isAdmin) const _UsersTab() else const SizedBox(),
                               if (isAdmin) const _CategoriesTab() else const SizedBox(),
                               if (isAdmin) const _MenuTab() else const SizedBox(),
+                              if (isAdmin) const _OffersTab() else const SizedBox(),
+                              if (isAdmin) const _CouponsTab() else const SizedBox(),
                             ],
                             ),
                           ),
@@ -202,6 +206,8 @@ class MainSidebar extends ConsumerWidget {
           if (isAdmin) MainSidebarNavItem(title: 'Users', icon: Icons.people_outline, isSelected: selectedIndex == 2, onTap: () => onItemSelected(2)),
           if (isAdmin) MainSidebarNavItem(title: 'Categories', icon: Icons.category_outlined, isSelected: selectedIndex == 3, onTap: () => onItemSelected(3)),
           if (isAdmin) MainSidebarNavItem(title: 'Menu', icon: Icons.restaurant_menu, isSelected: selectedIndex == 4, onTap: () => onItemSelected(4)),
+          if (isAdmin) MainSidebarNavItem(title: 'Promotions', icon: Icons.campaign, isSelected: selectedIndex == 5, onTap: () => onItemSelected(5)),
+          if (isAdmin) MainSidebarNavItem(title: 'Coupons', icon: Icons.confirmation_number_outlined, isSelected: selectedIndex == 6, onTap: () => onItemSelected(6)),
           if (!isAdmin) MainSidebarNavItem(title: 'Open POS', icon: Icons.point_of_sale, isSelected: selectedIndex == -1, onTap: () => context.go('/pos')),
           const Spacer(),
           const Divider(),
@@ -900,6 +906,48 @@ class _OrderCard extends StatelessWidget {
                       ),
                     ),
                   ),
+                  if ((order['discount_amount'] ?? 0) > 0) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '- ₹${order['discount_amount'].toStringAsFixed(0)} (${order['coupon_code']})', 
+                      style: const TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.bold)
+                    ),
+                  ],
+                  if (!isSuccess && status == 'PENDING') ...[
+                    const SizedBox(height: 8),
+                    Consumer(
+                      builder: (context, ref, child) => TextButton(
+                        style: TextButton.styleFrom(
+                          backgroundColor: const Color(0xFF8B3E22),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          minimumSize: const Size(0, 30),
+                        ),
+                        onPressed: () async {
+                          try {
+                            await Supabase.instance.client
+                                .from('orders')
+                                .update({'status': 'completed'})
+                                .eq('id', order['id']);
+                            ref.invalidate(filteredOrdersProvider);
+                            ref.invalidate(allFilteredOrdersProvider);
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Order accepted!'), backgroundColor: Colors.green),
+                              );
+                            }
+                          } catch (e) {
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+                              );
+                            }
+                          }
+                        },
+                        child: const Text('ACCEPT', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ],
@@ -1239,11 +1287,20 @@ class _MenuTabState extends ConsumerState<_MenuTab> {
                           .firstWhere((c) => c?['id'] == item['category_id'], orElse: () => null)?['name'] ?? '';
 
                       return ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: isAvailable ? Colors.orange : Colors.grey,
-                          child: const Icon(Icons.fastfood, color: Colors.white),
+                        leading: Container(
+                          width: 45, height: 45,
+                          decoration: BoxDecoration(
+                            color: isAvailable ? Colors.orange[50] : Colors.grey[100],
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: item['image_url'] != null && item['image_url'].toString().isNotEmpty
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.network(item['image_url'], fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 20)),
+                                )
+                              : Icon(Icons.fastfood, color: isAvailable ? Colors.orange : Colors.grey, size: 20),
                         ),
-                        title: Text(item['name']),
+                        title: Text(item['name'], style: const TextStyle(fontWeight: FontWeight.bold)),
                         subtitle: Text('₹${item['price']}${catName.isNotEmpty ? ' | $catName' : ''} | ${isAvailable ? "Available" : "Hidden"}'),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
@@ -1276,6 +1333,7 @@ class _MenuTabState extends ConsumerState<_MenuTab> {
   void _showAddMenuDialog(BuildContext context, {Map<String, dynamic>? item}) {
     final nameController = TextEditingController(text: item?['name'] ?? '');
     final priceController = TextEditingController(text: item?['price']?.toString() ?? '');
+    final imageController = TextEditingController(text: item?['image_url'] ?? '');
     String? selectedCategoryId = item?['category_id'];
 
     showDialog(
@@ -1291,7 +1349,6 @@ class _MenuTabState extends ConsumerState<_MenuTab> {
                 TextField(controller: priceController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Price')),
                 const SizedBox(height: 16),
                 
-                // Category Dropdown
                 FutureBuilder(
                   future: _supabase.from('categories').select(),
                   builder: (context, snapshot) {
@@ -1307,6 +1364,7 @@ class _MenuTabState extends ConsumerState<_MenuTab> {
                     );
                   },
                 ),
+                TextField(controller: imageController, decoration: const InputDecoration(labelText: 'Image URL (Optional)')),
               ],
             ),
           ),
@@ -1319,6 +1377,7 @@ class _MenuTabState extends ConsumerState<_MenuTab> {
                     'name': nameController.text,
                     'price': double.tryParse(priceController.text) ?? 0.0,
                     'category_id': selectedCategoryId,
+                    'image_url': imageController.text.trim().isEmpty ? null : imageController.text.trim(),
                   };
                   
                   if (item == null) {
@@ -1645,5 +1704,440 @@ class _CategoryFilterChip extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// OFFERS TAB (PROMOTIONS)
+// -----------------------------------------------------------------------------
+class _OffersTab extends ConsumerWidget {
+  const _OffersTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final offersAsync = ref.watch(offersProvider);
+
+    return Scaffold(
+      floatingActionButton: FloatingActionButton.extended(
+        backgroundColor: const Color(0xFF6B1F0E),
+        onPressed: () => _showAddOfferDialog(context, ref),
+        icon: const Icon(Icons.add, color: Colors.white),
+        label: const Text('Add Offer', style: TextStyle(color: Colors.white)),
+      ),
+      body: offersAsync.when(
+        data: (offers) {
+          if (offers.isEmpty) {
+            return const Center(child: Text('No active promotions. Add one to show on home screen!'));
+          }
+          return GridView.builder(
+            padding: const EdgeInsets.all(24),
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 400,
+              mainAxisExtent: 250,
+              crossAxisSpacing: 20,
+              mainAxisSpacing: 20,
+            ),
+            itemCount: offers.length,
+            itemBuilder: (context, index) {
+              final offer = offers[index];
+              return Card(
+                clipBehavior: Clip.antiAlias,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                child: Stack(
+                  children: [
+                    Image.network(
+                      offer.imageUrl,
+                      width: double.infinity,
+                      height: double.infinity,
+                      fit: BoxFit.cover,
+                      errorBuilder: (c, e, s) => const Center(child: Icon(Icons.broken_image, size: 50)),
+                    ),
+                    Positioned(
+                      top: 10,
+                      right: 10,
+                      child: CircleAvatar(
+                        backgroundColor: Colors.white.withOpacity(0.9),
+                        child: IconButton(
+                          icon: const Icon(Icons.delete_outline, color: Colors.red),
+                          onPressed: () => _deleteOffer(context, ref, offer.id),
+                        ),
+                      ),
+                    ),
+                    if (offer.title != null)
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [Colors.transparent, Colors.black.withOpacity(0.8)],
+                            ),
+                          ),
+                          child: Text(
+                            offer.title!,
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, st) => Center(child: Text('Error: $e')),
+      ),
+    );
+  }
+
+  void _showAddOfferDialog(BuildContext context, WidgetRef ref) {
+    final urlController = TextEditingController();
+    final titleController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('New Promotion'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: urlController,
+              decoration: const InputDecoration(
+                labelText: 'Image URL',
+                hintText: 'https://...',
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: titleController,
+              decoration: const InputDecoration(
+                labelText: 'Title (Optional)',
+                hintText: 'Summer Special, Holiday Deal, etc.',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              if (urlController.text.isEmpty) return;
+              try {
+                await ref.read(offerRepositoryProvider).addOffer(
+                  urlController.text,
+                  title: titleController.text.isNotEmpty ? titleController.text : null,
+                );
+                ref.invalidate(offersProvider);
+                if (context.mounted) Navigator.pop(context);
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                }
+              }
+            },
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _deleteOffer(BuildContext context, WidgetRef ref, String id) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Promotion?'),
+        content: const Text('Are you sure you want to remove this offer from the home screen?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        await ref.read(offerRepositoryProvider).deleteOffer(id);
+        ref.invalidate(offersProvider);
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+        }
+      }
+    }
+  }
+}
+// -----------------------------------------------------------------------------
+// COUPONS TAB
+// -----------------------------------------------------------------------------
+class _CouponsTab extends ConsumerWidget {
+  const _CouponsTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final couponsAsync = ref.watch(couponsProvider);
+
+    return Scaffold(
+      floatingActionButton: FloatingActionButton.extended(
+        backgroundColor: const Color(0xFF6B1F0E),
+        onPressed: () => _showAddCouponDialog(context, ref),
+        icon: const Icon(Icons.add, color: Colors.white),
+        label: const Text('Add Coupon', style: TextStyle(color: Colors.white)),
+      ),
+      body: couponsAsync.when(
+        data: (coupons) {
+          if (coupons.isEmpty) {
+            return const Center(child: Text('No coupons found. Create your first promo code!'));
+          }
+          return ListView.builder(
+            padding: const EdgeInsets.all(24),
+            itemCount: coupons.length,
+            itemBuilder: (context, index) {
+              final coupon = coupons[index];
+              final isPercentage = coupon.discountType == 'percentage';
+              
+              return Card(
+                margin: const EdgeInsets.only(bottom: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                child: ExpansionTile(
+                  leading: CircleAvatar(
+                    backgroundColor: const Color(0xFF6B1F0E).withOpacity(0.1),
+                    child: Icon(
+                      isPercentage ? Icons.percent : Icons.wallet, 
+                      color: const Color(0xFF6B1F0E),
+                    ),
+                  ),
+                  title: Text(coupon.code, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                  subtitle: Text(
+                    isPercentage 
+                        ? '${coupon.value}% Off' 
+                        : '₹${coupon.value.toStringAsFixed(0)} Off',
+                  ),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete_outline, color: Colors.red),
+                    onPressed: () => _deleteCoupon(context, ref, coupon.id),
+                  ),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Divider(),
+                          const SizedBox(height: 8),
+                          _buildInfoRow(Icons.event, 'Expires', coupon.expiryDate != null ? DateFormat('dd MMM yyyy').format(coupon.expiryDate!) : 'Never'),
+                          _buildInfoRow(Icons.shopping_cart, 'Min Order', '₹${coupon.minOrderValue.toStringAsFixed(0)}'),
+                          _buildInfoRow(Icons.loop, 'Usage', '${coupon.currentUsage} / ${coupon.usageLimit ?? '∞'}'),
+                          if (coupon.applicableItemIds != null && coupon.applicableItemIds!.isNotEmpty) ...[
+                            const SizedBox(height: 12),
+                            const Text('Restricted to Specific Items', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.green)),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, st) => Center(child: Text('Error: $e')),
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(IconData icon, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: Colors.grey),
+          const SizedBox(width: 8),
+          Text('$label: ', style: const TextStyle(color: Colors.grey, fontSize: 13)),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+        ],
+      ),
+    );
+  }
+
+  void _showAddCouponDialog(BuildContext context, WidgetRef ref) {
+    final codeController = TextEditingController();
+    final valueController = TextEditingController();
+    final minOrderController = TextEditingController(text: '0');
+    final usageLimitController = TextEditingController();
+    String discountType = 'percentage';
+    DateTime? selectedExpiry;
+    List<String> selectedItemIds = [];
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Create New Coupon'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: codeController,
+                  decoration: const InputDecoration(labelText: 'Coupon Code (e.g. WELCOME10)', hintText: 'WELCOME10'),
+                  textCapitalization: TextCapitalization.characters,
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  value: discountType,
+                  decoration: const InputDecoration(labelText: 'Discount Type'),
+                  items: const [
+                    DropdownMenuItem(value: 'percentage', child: Text('Percentage (%)')),
+                    DropdownMenuItem(value: 'flat', child: Text('Flat Amount (₹)')),
+                  ],
+                  onChanged: (val) {
+                    if (val != null) setDialogState(() => discountType = val);
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: valueController,
+                  decoration: const InputDecoration(labelText: 'Discount Value', hintText: '10'),
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: minOrderController,
+                  decoration: const InputDecoration(labelText: 'Min Order Value (MOV)', hintText: '200'),
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: usageLimitController,
+                  decoration: const InputDecoration(labelText: 'Usage Limit (Empty for ∞)', hintText: '100'),
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 24),
+                // Expiry Date Picker
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(selectedExpiry == null ? 'No Expiry Date' : 'Expires: ${DateFormat('dd MMM yyyy').format(selectedExpiry!)}'),
+                    TextButton(
+                      onPressed: () async {
+                        final date = await showDatePicker(
+                          context: context,
+                          initialDate: DateTime.now().add(const Duration(days: 30)),
+                          firstDate: DateTime.now(),
+                          lastDate: DateTime.now().add(const Duration(days: 365)),
+                        );
+                        if (date != null) setDialogState(() => selectedExpiry = date);
+                      },
+                      child: const Text('Set Date'),
+                    ),
+                  ],
+                ),
+                const Divider(),
+                // Item Selector
+                const SizedBox(height: 8),
+                const Text('Applicable Items (Empty for All)', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Consumer(
+                  builder: (context, ref, child) {
+                    final itemsAsync = ref.watch(menuItemsProvider);
+                    return itemsAsync.when(
+                      data: (items) => Container(
+                        height: 200,
+                        width: double.maxFinite,
+                        decoration: BoxDecoration(border: Border.all(color: Colors.grey[300]!), borderRadius: BorderRadius.circular(8)),
+                        child: ListView.builder(
+                          itemCount: items.length,
+                          itemBuilder: (context, idx) {
+                            final item = items[idx];
+                            final isSelected = selectedItemIds.contains(item.id);
+                            return CheckboxListTile(
+                              title: Text(item.name, style: const TextStyle(fontSize: 14)),
+                              subtitle: Text('₹${item.price}', style: const TextStyle(fontSize: 12)),
+                              value: isSelected,
+                              onChanged: (val) {
+                                setDialogState(() {
+                                  if (val == true) {
+                                    selectedItemIds.add(item.id);
+                                  } else {
+                                    selectedItemIds.remove(item.id);
+                                  }
+                                });
+                              },
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                              dense: true,
+                            );
+                          },
+                        ),
+                      ),
+                      loading: () => const Center(child: CircularProgressIndicator()),
+                      error: (e, st) => Text('Error: $e'),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () async {
+                final code = codeController.text.trim().toUpperCase();
+                final val = double.tryParse(valueController.text.trim()) ?? 0;
+                final mov = double.tryParse(minOrderController.text.trim()) ?? 0;
+                final limit = int.tryParse(usageLimitController.text.trim());
+                
+                if (code.isEmpty || val <= 0) return;
+
+                await ref.read(couponRepositoryProvider).addCoupon({
+                  'code': code,
+                  'discount_type': discountType,
+                  'value': val,
+                  'min_order_value': mov,
+                  'usage_limit': limit,
+                  'expiry_date': selectedExpiry?.toUtc().toIso8601String(),
+                  'applicable_item_ids': selectedItemIds.isEmpty ? null : selectedItemIds,
+                  'is_active': true,
+                  'current_usage': 0,
+                });
+                
+                ref.invalidate(couponsProvider);
+                if (context.mounted) Navigator.pop(context);
+              },
+              child: const Text('Create Coupon'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _deleteCoupon(BuildContext context, WidgetRef ref, String id) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Coupon?'),
+        content: const Text('This action cannot be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete', style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await ref.read(couponRepositoryProvider).deleteCoupon(id);
+      ref.invalidate(couponsProvider);
+    }
   }
 }

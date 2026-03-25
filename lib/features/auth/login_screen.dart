@@ -48,35 +48,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     return Scaffold(
       backgroundColor: Colors.white,
-      body: Row(
-        children: [
-          // Left Side - Branding
-          Expanded(
-            flex: 1,
-            child: Container(
-              color: _brandColor,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.storefront, size: 100, color: Colors.white),
-                  const SizedBox(height: 20),
-                  Text(
-                    'Fukrey Cafe\nPOS',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.displayMedium?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final isMobile = constraints.maxWidth < 800;
           
-          // Right Side - Login Form
-          Expanded(
-            flex: 1,
-            child: Center(
+          final loginForm = Center(
+            child: SingleChildScrollView(
               child: Container(
                 constraints: const BoxConstraints(maxWidth: 400),
                 padding: const EdgeInsets.all(32),
@@ -177,8 +154,78 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 ),
               ),
             ),
-          ),
-        ],
+          );
+
+          if (isMobile) {
+            return Column(
+              children: [
+                Expanded(
+                  flex: 1,
+                  child: Container(
+                    width: double.infinity,
+                    color: _brandColor,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.storefront, size: 60, color: Colors.white),
+                        const SizedBox(height: 10),
+                        Text(
+                          'Fukrey Cafe\nPOS',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 3,
+                  child: loginForm,
+                ),
+              ],
+            );
+          }
+
+          return Row(
+            children: [
+              // Left Side - Branding
+              Expanded(
+                flex: 1,
+                child: Container(
+                  color: _brandColor,
+                  child: Center(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.storefront, size: 100, color: Colors.white),
+                          const SizedBox(height: 20),
+                          Text(
+                            'Fukrey Cafe\nPOS',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.displayMedium?.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              
+              // Right Side - Login Form
+              Expanded(
+                flex: 1,
+                child: loginForm,
+              ),
+            ],
+          );
+        },
       ),
     );
   }

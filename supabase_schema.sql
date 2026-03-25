@@ -74,6 +74,7 @@ create table coupons (
 create table orders (
   id uuid default uuid_generate_v4() primary key,
   outlet_id uuid references outlets(id) not null,
+  customer_id uuid references profiles(id), -- Nullable for guest orders
   total_amount numeric not null,
   status text check (status in ('pending', 'completed', 'cancelled')) default 'pending',
   payment_method text,

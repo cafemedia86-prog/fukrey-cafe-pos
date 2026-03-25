@@ -13,17 +13,11 @@ final authUserProvider = StreamProvider<User?>((ref) {
 
 /// Provides the full [UserModel] details including role and outlet.
 final userProfileProvider = FutureProvider<UserModel?>((ref) async {
-  final authUserAsync = ref.watch(authUserProvider);
+  final user = await ref.watch(authUserProvider.future);
   
-  return authUserAsync.when(
-    data: (user) async {
-      if (user == null) return null;
-      final userRepo = ref.watch(userRepositoryProvider);
-      return await userRepo.getUserProfile(user.id);
-    },
-    loading: () => null,
-    error: (_, __) => null,
-  );
+  if (user == null) return null;
+  final userRepo = ref.watch(userRepositoryProvider);
+  return await userRepo.getUserProfile(user.id);
 });
 
 /// Combined state for Auth including loading/error handling.
