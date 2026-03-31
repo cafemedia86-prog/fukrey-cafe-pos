@@ -327,7 +327,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('${time.day}/${time.month} ${time.hour}:${time.minute.toString().padLeft(2, '0')} | ₹${order['total_amount']} | ${order['payment_method']?.toString().toUpperCase() ?? 'CASH'}'),
+                              Text('${time.day}/${time.month} ${time.hour}:${time.minute.toString().padLeft(2, '0')} | ₹${order['total_amount']} | ${_formatPaymentLabel(order['payment_method']?.toString())}'),
                               if ((order['discount_amount'] ?? 0) > 0)
                                 Text(
                                   '-₹${(order['discount_amount'] as num).toStringAsFixed(0)} (${order['coupon_code']})', 
@@ -588,25 +588,48 @@ class _CartFooterState extends ConsumerState<_CartFooter> {
             const SizedBox(height: 8),
             const Text('Payment Mode', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey)),
             const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'cash', label: Text('Cash'), icon: Icon(Icons.money)),
-                  ButtonSegment(value: 'card', label: Text('Card'), icon: Icon(Icons.credit_card)),
-                  ButtonSegment(value: 'upi', label: Text('UPI'), icon: Icon(Icons.qr_code)),
-                ],
-                selected: {cartState.paymentMethod},
-                onSelectionChanged: (Set<String> newSelection) {
-                  ref.read(cartProvider.notifier).setPaymentMethod(newSelection.first);
-                },
-                style: SegmentedButton.styleFrom(
-                  selectedBackgroundColor: Colors.orange,
-                  selectedForegroundColor: Colors.white,
-                  visualDensity: VisualDensity.compact,
+            // ── Normal single-method selector (hidden in split mode) ──
+            if (!cartState.isSplitPayment)
+              SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'cash', label: Text('Cash'), icon: Icon(Icons.money)),
+                    ButtonSegment(value: 'card', label: Text('Card'), icon: Icon(Icons.credit_card)),
+                    ButtonSegment(value: 'upi', label: Text('UPI'), icon: Icon(Icons.qr_code)),
+                  ],
+                  selected: {cartState.paymentMethod},
+                  onSelectionChanged: (Set<String> newSelection) {
+                    ref.read(cartProvider.notifier).setPaymentMethod(newSelection.first);
+                  },
+                  style: SegmentedButton.styleFrom(
+                    selectedBackgroundColor: Colors.orange,
+                    selectedForegroundColor: Colors.white,
+                    visualDensity: VisualDensity.compact,
+                  ),
                 ),
               ),
+            // ── Split Payment toggle ──
+            const SizedBox(height: 4),
+            SwitchListTile(
+              title: const Text('Split Payment', style: TextStyle(fontSize: 14)),
+              subtitle: const Text('Charge via multiple methods', style: TextStyle(fontSize: 11, color: Colors.grey)),
+              value: cartState.isSplitPayment,
+              onChanged: (val) {
+                if (val) {
+                  ref.read(cartProvider.notifier).enableSplitPayment();
+                } else {
+                  ref.read(cartProvider.notifier).disableSplitPayment();
+                }
+              },
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              activeThumbColor: Colors.orange,
+              activeTrackColor: Colors.orange.withValues(alpha: 0.5),
             ),
+            // ── Split Payment Widget (shown only when split is ON) ──
+            if (cartState.isSplitPayment)
+              _SplitPaymentWidget(cartState: cartState),
             const Divider(),
             _TotalRow(label: 'Subtotal', value: '₹${cartState.subtotal.toStringAsFixed(2)}'),
             if (cartState.discountAmount > 0)
@@ -630,16 +653,23 @@ class _CartFooterState extends ConsumerState<_CartFooter> {
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
-                onPressed: cartState.items.isEmpty ? null : () async {
-                  // Wait for the outlets repo to be fully loaded just in case it was invalidated
-                  await ref.read(outletsRepoProvider.future);
-                  if (!context.mounted) return;
-                  _showInvoicePreview(context, ref, cartState, _nameController.text, _phoneController.text, () {
-                    _nameController.clear();
-                    _phoneController.clear();
-                  });
-                },
-                child: const Text('PROCEED TO CHECKOUT', style: TextStyle(fontWeight: FontWeight.bold)),
+                // Disabled when: cart empty, OR split mode is ON but amounts don't add up
+                onPressed: (cartState.items.isEmpty || (cartState.isSplitPayment && !cartState.isSplitValid))
+                    ? null
+                    : () async {
+                        await ref.read(outletsRepoProvider.future);
+                        if (!context.mounted) return;
+                        _showInvoicePreview(context, ref, cartState, _nameController.text, _phoneController.text, () {
+                          _nameController.clear();
+                          _phoneController.clear();
+                        });
+                      },
+                child: Text(
+                  cartState.isSplitPayment && !cartState.isSplitValid && cartState.splitPayments.isNotEmpty
+                      ? 'SPLIT TOTAL ≠ ₹${cartState.total.toStringAsFixed(0)}'
+                      : 'PROCEED TO CHECKOUT',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
               ),
             )
           ],
@@ -684,6 +714,23 @@ class _CartFooterState extends ConsumerState<_CartFooter> {
   }
 }
 
+/// Converts both old ("cash+upi") and new encoded ("cash:100.00|upi:99.00") 
+/// payment_method values into a human-readable label e.g. "CASH + UPI"
+String _formatPaymentLabel(String? raw) {
+  if (raw == null || raw.isEmpty) return 'CASH';
+  final lower = raw.toLowerCase();
+  if (lower.contains('|')) {
+    // New encoded format: "cash:100.00|upi:99.00"
+    final methods = lower.split('|').map((part) => part.split(':').first.trim().toUpperCase());
+    return methods.join(' + ');
+  }
+  if (lower.contains('+')) {
+    // Old split format: "cash+upi"
+    return lower.split('+').map((m) => m.trim().toUpperCase()).join(' + ');
+  }
+  return raw.toUpperCase();
+}
+
 void _showInvoicePreview(BuildContext context, WidgetRef ref, CartState cart, String custName, String custPhone, VoidCallback onSuccess) {
   final profile = ref.read(userProfileProvider).value;
   final outlets = ref.read(outletsRepoProvider).value ?? [];
@@ -693,10 +740,6 @@ void _showInvoicePreview(BuildContext context, WidgetRef ref, CartState cart, St
   
   final String upiId = targetOutlet['upi_id'] ?? '';
   final String brandName = targetOutlet['brand_name'] ?? targetOutlet['name'] ?? 'Cafe';
-  final double totalAmount = cart.total;
-  
-  // Format: upi://pay?pa=UPI_ID&pn=PAYEE_NAME&am=AMOUNT&cu=INR
-  final String upiString = "upi://pay?pa=$upiId&pn=${Uri.encodeComponent(brandName)}&am=${totalAmount.toStringAsFixed(2)}&cu=INR";
   
   print('DEBUG: _showInvoicePreview -> Outlet ID: ${profile?.outletId}');
   print('DEBUG: _showInvoicePreview -> Target Outlet Map: $targetOutlet');
@@ -747,28 +790,57 @@ void _showInvoicePreview(BuildContext context, WidgetRef ref, CartState cart, St
                 _TotalRow(label: 'Tax (5%)', value: '₹${cart.taxAmount.toStringAsFixed(2)}'),
               const Divider(),
               _TotalRow(label: 'GRAND TOTAL', value: '₹${cart.total.toStringAsFixed(2)}', isBold: true),
-              if (cart.paymentMethod == 'upi') ...[
-                const SizedBox(height: 16),
-                const Text('Scan to Pay via UPI', style: TextStyle(fontWeight: FontWeight.bold)),
+              // ── Split payment breakdown ──
+              if (cart.isSplitPayment) ...[
                 const SizedBox(height: 8),
-                if (upiId.isNotEmpty)
-                  Center(
-                    child: QrImageView(
-                      data: upiString,
-                      version: QrVersions.auto,
-                      size: 180.0,
-                    ),
-                  )
-                else
-                  const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(16.0),
-                      child: Text('UPI ID not configured in Admin settings.', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-                    ),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
                   ),
-                const SizedBox(height: 8),
-                Text('₹${cart.total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Payment Breakdown', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                      const SizedBox(height: 4),
+                      ...cart.splitPayments.map((sp) => Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(sp.method.toUpperCase(), style: const TextStyle(fontSize: 13)),
+                            Text('₹${sp.amount.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                          ],
+                        ),
+                      )),
+                    ],
+                  ),
+                ),
               ],
+              // ── UPI QR: for full amount (single UPI) or UPI portion (split) ──
+              Builder(builder: (context) {
+                final bool hasUpi = cart.isSplitPayment
+                    ? cart.splitPayments.any((s) => s.method == 'upi')
+                    : cart.paymentMethod == 'upi';
+                if (!hasUpi) return const SizedBox.shrink();
+                final double upiAmount = cart.isSplitPayment
+                    ? cart.splitPayments.firstWhere((s) => s.method == 'upi', orElse: () => const SplitPayment(method: 'upi', amount: 0)).amount
+                    : cart.total;
+                final String upiPayString = "upi://pay?pa=$upiId&pn=${Uri.encodeComponent(brandName)}&am=${upiAmount.toStringAsFixed(2)}&cu=INR";
+                return Column(children: [
+                  const SizedBox(height: 16),
+                  Text('Scan to Pay via UPI${cart.isSplitPayment ? ' (UPI portion)' : ''}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  if (upiId.isNotEmpty)
+                    Center(child: QrImageView(data: upiPayString, version: QrVersions.auto, size: 180.0))
+                  else
+                    const Center(child: Padding(padding: EdgeInsets.all(16.0), child: Text('UPI ID not configured in Admin settings.', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)))),
+                  const SizedBox(height: 8),
+                  Text('₹${upiAmount.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                ]);
+              }),
             ],
           ),
         ),
@@ -824,7 +896,7 @@ Future<void> _handleCheckout(BuildContext context, WidgetRef ref, CartState cart
       'total': cartState.total,
       'discount_amount': cartState.discountAmount,
       'tax_amount': cartState.taxAmount,
-      'payment_method': cartState.paymentMethod,
+      'payment_method': cartState.effectivePaymentLabel,
       'coupon_code': cartState.appliedCoupon?.code,
       'customer_name': custName.isEmpty ? null : custName,
       'customer_phone': custPhone.isEmpty ? null : custPhone,
@@ -1085,7 +1157,170 @@ class _MenuItemCard extends ConsumerWidget {
   }
 }
 
+
+// =============================================================================
+// _SplitPaymentWidget
+// Shown in the cart footer when "Split Payment" is toggled ON.
+// Lets the cashier pick which methods are active and enter amounts.
+// =============================================================================
+class _SplitPaymentWidget extends ConsumerStatefulWidget {
+  final CartState cartState;
+  const _SplitPaymentWidget({required this.cartState});
+
+  @override
+  ConsumerState<_SplitPaymentWidget> createState() => _SplitPaymentWidgetState();
+}
+
+class _SplitPaymentWidgetState extends ConsumerState<_SplitPaymentWidget> {
+  // Available methods with display labels and icons
+  static const _allMethods = [
+    ('cash', 'Cash', Icons.money),
+    ('card', 'Card', Icons.credit_card),
+    ('upi', 'UPI', Icons.qr_code),
+  ];
+
+  // Method -> controller map (managed here for text editing)
+  final Map<String, TextEditingController> _controllers = {};
+  // Which methods are currently checked
+  final Set<String> _activeMethods = {'cash', 'upi'};
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialise controllers for all methods
+    for (final m in _allMethods) {
+      _controllers[m.$1] = TextEditingController();
+    }
+    // Pre-fill from existing split state
+    for (final sp in widget.cartState.splitPayments) {
+      _controllers[sp.method]?.text = sp.amount > 0 ? sp.amount.toStringAsFixed(2) : '';
+      _activeMethods.add(sp.method);
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final c in _controllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  void _sync() {
+    final payments = _activeMethods.map((method) {
+      final val = double.tryParse(_controllers[method]?.text.trim() ?? '') ?? 0.0;
+      return SplitPayment(method: method, amount: val);
+    }).toList();
+    ref.read(cartProvider.notifier).setSplitPayments(payments);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final total = widget.cartState.total;
+    final splitTotal = widget.cartState.splitTotal;
+    final diff = total - splitTotal;
+    final isMismatch = diff.abs() >= 0.01;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.orange.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Method selector row
+          Wrap(
+            spacing: 6,
+            children: _allMethods.map((m) {
+              final method = m.$1;
+              final label = m.$2;
+              final icon = m.$3;
+              final isActive = _activeMethods.contains(method);
+              return FilterChip(
+                label: Text(label, style: const TextStyle(fontSize: 12)),
+                avatar: Icon(icon, size: 14),
+                selected: isActive,
+                onSelected: (val) {
+                  // Must keep at least 2 methods active
+                  if (!val && _activeMethods.length <= 2) return;
+                  setState(() {
+                    if (val) {
+                      _activeMethods.add(method);
+                    } else {
+                      _activeMethods.remove(method);
+                      _controllers[method]?.clear();
+                    }
+                  });
+                  _sync();
+                },
+                selectedColor: Colors.orange.withValues(alpha: 0.25),
+                checkmarkColor: Colors.orange,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 8),
+          // Amount input per active method
+          ..._activeMethods.map((method) {
+            final label = _allMethods.firstWhere((m) => m.$1 == method).$2;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 48,
+                    child: Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                  ),
+                  Expanded(
+                    child: TextField(
+                      controller: _controllers[method],
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: InputDecoration(
+                        prefixText: '₹ ',
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: const BorderSide(color: Colors.orange),
+                        ),
+                      ),
+                      onChanged: (_) => _sync(),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+          // Mismatch indicator
+          if (isMismatch)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                diff > 0
+                    ? 'Short by ₹${diff.toStringAsFixed(2)}'
+                    : 'Over by ₹${(-diff).toStringAsFixed(2)}',
+                style: const TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold),
+              ),
+            )
+          else
+            const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: Text('✓ Amounts match', style: TextStyle(color: Colors.green, fontSize: 12, fontWeight: FontWeight.bold)),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TotalRow extends StatelessWidget {
+
   final String label;
   final String value;
   final bool isBold;

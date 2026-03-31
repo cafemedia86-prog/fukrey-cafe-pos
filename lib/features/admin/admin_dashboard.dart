@@ -427,12 +427,44 @@ class _PaymentMethodsChart extends ConsumerWidget {
               for (var o in orders) {
                 final amount = (o['total_amount'] as num?)?.toDouble() ?? 0.0;
                 final mode = (o['payment_method']?.toString().toLowerCase() ?? 'cash');
-                if (mode.contains('upi')) {
-                  upi += amount;
-                } else if (mode.contains('card')) {
-                  card += amount;
+
+                if (mode.contains('|')) {
+                  // New encoded format: "cash:100.00|upi:99.00"
+                  for (final part in mode.split('|')) {
+                    final kv = part.split(':');
+                    if (kv.length < 2) continue;
+                    final method = kv[0].trim();
+                    final share = double.tryParse(kv[1].trim()) ?? 0.0;
+                    if (method == 'upi') {
+                      upi += share;
+                    } else if (method == 'card') {
+                      card += share;
+                    } else {
+                      cash += share;
+                    }
+                  }
+                } else if (mode.contains('+')) {
+                  // Old split format without amounts: "cash+upi" – divide equally (legacy)
+                  final methods = mode.split('+').where((m) => m.isNotEmpty).toList();
+                  final share = methods.isEmpty ? amount : amount / methods.length;
+                  for (final method in methods) {
+                    if (method == 'upi') {
+                      upi += share;
+                    } else if (method == 'card') {
+                      card += share;
+                    } else {
+                      cash += share;
+                    }
+                  }
                 } else {
-                  cash += amount;
+                  // Single method: "cash", "upi", "card"
+                  if (mode == 'upi') {
+                    upi += amount;
+                  } else if (mode == 'card') {
+                    card += amount;
+                  } else {
+                    cash += amount;
+                  }
                 }
               }
 
@@ -827,6 +859,20 @@ class _RecentOrdersList extends ConsumerWidget {
   }
 }
 
+/// Converts encoded payment_method values to a human-readable label.
+/// Handles: "cash", "upi", "cash+upi" (legacy) and "cash:100.00|upi:99.00" (new)
+String _formatPaymentLabel(String? raw) {
+  if (raw == null || raw.isEmpty) return 'CASH';
+  final lower = raw.toLowerCase();
+  if (lower.contains('|')) {
+    return lower.split('|').map((p) => p.split(':').first.trim().toUpperCase()).join(' + ');
+  }
+  if (lower.contains('+')) {
+    return lower.split('+').map((m) => m.trim().toUpperCase()).join(' + ');
+  }
+  return raw.toUpperCase();
+}
+
 class _OrderCard extends StatelessWidget {
   final Map<String, dynamic> order;
   const _OrderCard({required this.order});
@@ -835,7 +881,7 @@ class _OrderCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final total = order['total_amount'] ?? 0;
     final time = DateTime.parse(order['created_at']).toLocal();
-    final paymentMethod = order['payment_method']?.toString() ?? 'Cash';
+    final paymentMethod = _formatPaymentLabel(order['payment_method']?.toString());
     
     final diff = DateTime.now().difference(time);
     String timeAgo;
